@@ -1,13 +1,16 @@
 use iced::{
-    Element, Subscription, Theme,
-    widget::{button, column, text},
+    Element, Subscription, Task, Theme,
+    widget::{button, column, row, text},
 };
-use pawmodoro::timer::{self};
+use pawmodoro::{
+    config::Config,
+    timer::{self},
+};
 
 pub fn main() -> iced::Result {
     env_logger::init();
 
-    iced::application(State::default, update, view)
+    iced::application(new, update, view)
         .subscription(subscription)
         .theme(Theme::Dark)
         .centered()
@@ -27,16 +30,19 @@ impl Time {
     }
 }
 
-impl Default for Time {
-    fn default() -> Self {
-        Time::Paused(30)
-    }
+#[derive(Debug, Clone, PartialEq)]
+enum Mode {
+    Work,
+    ShortBreak,
+    LongBreak,
 }
 
-#[derive(Default)]
 struct State {
+    config: Config,
+    mode: Mode,
     timer: Option<timer::Timer>,
     time: Time,
+    rounds: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -44,29 +50,81 @@ enum Message {
     Timer(timer::Event),
     Start,
     Pause,
+    Switch(Mode),
 }
 
-fn update(state: &mut State, message: Message) {
+fn new() -> State {
+    let config = Config::default();
+
+    State {
+        config: Default::default(),
+        mode: Mode::Work,
+        timer: None,
+        time: Time::Paused(config.work_duration),
+        rounds: 0,
+    }
+}
+
+fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Timer(timer::Event::Init(timer)) => {
             state.timer = Some(timer);
+
+            Task::none()
         }
         Message::Timer(timer::Event::Tick(remaining)) => {
             state.time = Time::Running(remaining);
+
+            Task::none()
         }
-        Message::Timer(timer::Event::Paused(remaining)) => {
-            state.time = Time::Paused(remaining);
+        Message::Timer(timer::Event::Stopped) => {
+            state.time = Time::Paused(0);
+            state.rounds += 1;
+
+            let mode = match state.mode {
+                Mode::Work => {
+                    if state.rounds % state.config.rounds_before_long_break == 0 {
+                        Mode::LongBreak
+                    } else {
+                        Mode::ShortBreak
+                    }
+                }
+                Mode::ShortBreak => Mode::Work,
+                Mode::LongBreak => Mode::Work,
+            };
+
+            Task::done(Message::Switch(mode))
         }
         Message::Start => {
             if let Some(ref timer) = state.timer {
                 let duration = state.time.remaining();
                 timer.start(duration);
             }
+
+            Task::none()
         }
         Message::Pause => {
             if let Some(ref timer) = state.timer {
-                timer.pause();
+                timer.stop();
             }
+
+            Task::none()
+        }
+        Message::Switch(mode) => {
+            if let Some(ref timer) = state.timer {
+                timer.stop();
+            }
+
+            let duration = match mode {
+                Mode::Work => state.config.work_duration,
+                Mode::ShortBreak => state.config.short_break_duration,
+                Mode::LongBreak => state.config.long_break_duration,
+            };
+
+            state.mode = mode;
+            state.time = Time::Paused(duration);
+
+            Task::none()
         }
     }
 }
@@ -76,6 +134,14 @@ fn subscription(_: &State) -> Subscription<Message> {
 }
 
 fn view(state: &State) -> Element<'_, Message> {
+    let modes = {
+        let work = mode_button(&state.mode, Mode::Work);
+        let short_break = mode_button(&state.mode, Mode::ShortBreak);
+        let long_break = mode_button(&state.mode, Mode::LongBreak);
+
+        row![work, short_break, long_break]
+    };
+
     let time = {
         let value = state.time.remaining();
         let minutes = value / 60;
@@ -90,5 +156,19 @@ fn view(state: &State) -> Element<'_, Message> {
         Time::Paused(_) => button("Start").on_press(Message::Start),
     };
 
-    column![time, button].into()
+    column![modes, time, button].into()
+}
+
+fn mode_button<'a>(current_mode: &'a Mode, mode: Mode) -> Element<'a, Message> {
+    let label = match mode {
+        Mode::Work => "Work",
+        Mode::ShortBreak => "Short Break",
+        Mode::LongBreak => "Long Break",
+    };
+
+    if *current_mode == mode {
+        button(label).into()
+    } else {
+        button(label).on_press(Message::Switch(mode)).into()
+    }
 }

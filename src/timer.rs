@@ -12,32 +12,32 @@ impl Timer {
         self.0.try_send(Command::Start(duration)).unwrap();
     }
 
-    pub fn pause(&self) {
-        self.0.try_send(Command::Pause).unwrap();
+    pub fn stop(&self) {
+        self.0.try_send(Command::Stop).unwrap();
     }
 }
 
 enum TimerState {
     Running(time::Interval, u64),
-    Paused,
+    Stopped,
 }
 
 #[derive(Debug, Clone)]
 pub enum Event {
     Init(Timer),
     Tick(u64),
-    Paused(u64),
+    Stopped,
 }
 
 #[derive(Debug, Clone)]
 pub enum Command {
     Start(u64),
-    Pause,
+    Stop,
 }
 
 pub fn start() -> impl Stream<Item = Event> {
     stream::channel(100, |mut output: Sender<Event>| async move {
-        let mut state = TimerState::Paused;
+        let mut state = TimerState::Stopped;
         let (tx, mut rx) = mpsc::channel(100);
         let timer = Timer(tx);
         output.try_send(Event::Init(timer)).unwrap();
@@ -49,10 +49,9 @@ pub fn start() -> impl Stream<Item = Event> {
                         Command::Start(duration) => {
                             state = TimerState::Running(new_interval(), duration);
                         },
-                        Command::Pause => {
-                            if let TimerState::Running(_, remaining) = state {
-                                state = TimerState::Paused;
-                                output.try_send(Event::Paused(remaining)).unwrap();
+                        Command::Stop => {
+                            if let TimerState::Running(_, _) = state {
+                                state = TimerState::Stopped;
                             }
                         },
                     }
@@ -69,8 +68,8 @@ pub fn start() -> impl Stream<Item = Event> {
                             *remaining -= 1;
                             output.try_send(Event::Tick(*remaining)).unwrap();
                         } else {
-                            state = TimerState::Paused;
-                            output.try_send(Event::Paused(0)).unwrap();
+                            state = TimerState::Stopped;
+                            output.try_send(Event::Stopped).unwrap();
                         }
                     }
                 }
