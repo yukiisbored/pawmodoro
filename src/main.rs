@@ -79,7 +79,10 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Timer(timer::Event::Stopped) => {
             state.time = Time::Paused(0);
-            state.rounds += 1;
+
+            if state.mode == Mode::Work {
+                state.rounds += 1;
+            }
 
             let mode = match state.mode {
                 Mode::Work => {
