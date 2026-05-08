@@ -1,5 +1,6 @@
 use iced::{
-    Element, Subscription, Task, Theme,
+    Alignment::Center,
+    Element, Subscription, Task,
     widget::{button, column, row, text},
 };
 use pawmodoro::{
@@ -12,7 +13,6 @@ pub fn main() -> iced::Result {
 
     iced::application(new, update, view)
         .subscription(subscription)
-        .theme(Theme::Dark)
         .centered()
         .run()
 }
@@ -142,7 +142,7 @@ fn view(state: &State) -> Element<'_, Message> {
         let short_break = mode_button(&state.mode, Mode::ShortBreak);
         let long_break = mode_button(&state.mode, Mode::LongBreak);
 
-        row![work, short_break, long_break]
+        row![work, short_break, long_break].spacing(8)
     };
 
     let time = {
@@ -151,7 +151,7 @@ fn view(state: &State) -> Element<'_, Message> {
         let seconds = value % 60;
         let time = format!("{:02}:{:02}", minutes, seconds);
 
-        text(time)
+        text(time).size(80)
     };
 
     let button = match state.time {
@@ -159,7 +159,11 @@ fn view(state: &State) -> Element<'_, Message> {
         Time::Paused(_) => button("Start").on_press(Message::Start),
     };
 
-    column![modes, time, button].into()
+    column![modes, time, button]
+        .align_x(Center)
+        .spacing(16)
+        .padding(32)
+        .into()
 }
 
 fn mode_button<'a>(current_mode: &'a Mode, mode: Mode) -> Element<'a, Message> {
