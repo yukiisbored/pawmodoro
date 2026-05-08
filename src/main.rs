@@ -1,9 +1,8 @@
-use futures::StreamExt as _;
 use iced::{
-    Element, Program, Subscription, Theme,
+    Element, Subscription, Theme,
     widget::{button, column, text},
 };
-use pawmodoro::timer::{self, Timer};
+use pawmodoro::timer::{self};
 
 pub fn main() -> iced::Result {
     env_logger::init();
@@ -18,6 +17,14 @@ pub fn main() -> iced::Result {
 enum Time {
     Running(u64),
     Paused(u64),
+}
+
+impl Time {
+    fn remaining(&self) -> u64 {
+        match self {
+            Time::Running(remaining) | Time::Paused(remaining) => *remaining,
+        }
+    }
 }
 
 impl Default for Time {
@@ -46,17 +53,13 @@ fn update(state: &mut State, message: Message) {
         }
         Message::Timer(timer::Event::Tick(remaining)) => {
             state.time = Time::Running(remaining);
-            println!("Time remaining: {} seconds", remaining);
         }
         Message::Timer(timer::Event::Paused(remaining)) => {
             state.time = Time::Paused(remaining);
-            println!("Timer paused with {} seconds remaining", remaining);
         }
         Message::Start => {
             if let Some(ref timer) = state.timer {
-                let duration = match state.time {
-                    Time::Running(remaining) | Time::Paused(remaining) => remaining,
-                };
+                let duration = state.time.remaining();
                 timer.start(duration);
             }
         }
@@ -74,9 +77,7 @@ fn subscription(_: &State) -> Subscription<Message> {
 
 fn view(state: &State) -> Element<'_, Message> {
     let time = {
-        let value = match state.time {
-            Time::Running(remaining) | Time::Paused(remaining) => remaining,
-        };
+        let value = state.time.remaining();
         let minutes = value / 60;
         let seconds = value % 60;
         let time = format!("{:02}:{:02}", minutes, seconds);
