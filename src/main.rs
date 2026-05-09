@@ -1,7 +1,9 @@
 use iced::{
     Alignment::Center,
-    Element, Subscription, Task,
-    widget::{button, column, row, text},
+    Element,
+    Length::Fill,
+    Subscription, Task,
+    widget::{button, column, row, space, text},
 };
 use pawmodoro::{
     config::Config,
@@ -14,6 +16,9 @@ pub fn main() -> iced::Result {
     iced::application(State::new, State::update, State::view)
         .subscription(State::subscription)
         .centered()
+        .window_size((420, 264))
+        .resizable(false)
+        .title("Pawmodoro")
         .run()
 }
 
@@ -32,7 +37,7 @@ impl Time {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Mode {
-    Work,
+    Pomodoro,
     ShortBreak,
     LongBreak,
 }
@@ -51,6 +56,7 @@ enum Message {
     Start,
     Pause,
     Switch(Mode),
+    Next,
 }
 
 impl State {
@@ -59,7 +65,7 @@ impl State {
 
         State {
             config: Default::default(),
-            mode: Mode::Work,
+            mode: Mode::Pomodoro,
             timer: None,
             time: Time::Paused(config.work_duration),
             rounds: 0,
@@ -68,15 +74,22 @@ impl State {
 
     fn next_mode(&self) -> Mode {
         match self.mode {
-            Mode::Work => {
+            Mode::Pomodoro => {
                 if self.rounds % self.config.rounds_before_long_break == 0 {
                     Mode::LongBreak
                 } else {
                     Mode::ShortBreak
                 }
             }
-            Mode::ShortBreak => Mode::Work,
-            Mode::LongBreak => Mode::Work,
+            Mode::ShortBreak => Mode::Pomodoro,
+            Mode::LongBreak => Mode::Pomodoro,
+        }
+    }
+
+    fn stop_timer(&mut self) {
+        if let Some(ref timer) = self.timer {
+            timer.stop();
+            self.time = Time::Paused(self.time.remaining());
         }
     }
 
@@ -95,36 +108,27 @@ impl State {
             Message::Timer(timer::Event::Stopped) => {
                 self.time = Time::Paused(0);
 
-                if self.mode == Mode::Work {
-                    self.rounds += 1;
-                }
-
-                let mode = self.next_mode();
-
-                Task::done(Message::Switch(mode))
+                Task::done(Message::Next)
             }
             Message::Start => {
                 if let Some(ref timer) = self.timer {
                     let duration = self.time.remaining();
+                    self.time = Time::Running(duration);
                     timer.start(duration);
                 }
 
                 Task::none()
             }
             Message::Pause => {
-                if let Some(ref timer) = self.timer {
-                    timer.stop();
-                }
+                self.stop_timer();
 
                 Task::none()
             }
             Message::Switch(mode) => {
-                if let Some(ref timer) = self.timer {
-                    timer.stop();
-                }
+                self.stop_timer();
 
                 let duration = match mode {
-                    Mode::Work => self.config.work_duration,
+                    Mode::Pomodoro => self.config.work_duration,
                     Mode::ShortBreak => self.config.short_break_duration,
                     Mode::LongBreak => self.config.long_break_duration,
                 };
@@ -133,6 +137,15 @@ impl State {
                 self.time = Time::Paused(duration);
 
                 Task::none()
+            }
+            Message::Next => {
+                if self.mode == Mode::Pomodoro {
+                    self.rounds += 1;
+                }
+
+                let mode = self.next_mode();
+
+                Task::done(Message::Switch(mode))
             }
         }
     }
@@ -143,7 +156,7 @@ impl State {
 
     fn view(&self) -> Element<'_, Message> {
         let modes = {
-            let work = mode_button(&self.mode, Mode::Work);
+            let work = mode_button(&self.mode, Mode::Pomodoro);
             let short_break = mode_button(&self.mode, Mode::ShortBreak);
             let long_break = mode_button(&self.mode, Mode::LongBreak);
 
@@ -159,12 +172,36 @@ impl State {
             text(time).size(80)
         };
 
-        let button = match self.time {
-            Time::Running(_) => button("Pause").on_press(Message::Pause),
-            Time::Paused(_) => button("Start").on_press(Message::Start),
+        let is_running = matches!(self.time, Time::Running(_));
+
+        let bottom = {
+            let primary_button = {
+                let label = if is_running { "Pause" } else { "Start" };
+                let message = if is_running {
+                    Message::Pause
+                } else {
+                    Message::Start
+                };
+
+                button(text(label).width(Fill).center())
+                    .on_press(message)
+                    .width(72)
+            };
+
+            let skip_button: Element<'_, Message> = {
+                let button = button(text("Skip").width(Fill).center()).width(72);
+
+                if is_running {
+                    button.on_press(Message::Next).into()
+                } else {
+                    button.into()
+                }
+            };
+
+            row![space().width(72), primary_button, skip_button].spacing(8)
         };
 
-        column![modes, time, button]
+        column![modes, time, bottom]
             .align_x(Center)
             .spacing(16)
             .padding(32)
@@ -174,14 +211,16 @@ impl State {
 
 fn mode_button<'a>(current_mode: &'a Mode, mode: Mode) -> Element<'a, Message> {
     let label = match mode {
-        Mode::Work => "Work",
+        Mode::Pomodoro => "Pomodoro",
         Mode::ShortBreak => "Short Break",
         Mode::LongBreak => "Long Break",
     };
 
+    let button = button(text(label).width(Fill).center());
+
     if *current_mode == mode {
-        button(label).into()
+        button.into()
     } else {
-        button(label).on_press(Message::Switch(mode)).into()
+        button.on_press(Message::Switch(mode)).into()
     }
 }
