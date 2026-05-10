@@ -75,7 +75,10 @@ impl State {
     fn next_mode(&self) -> Mode {
         match self.mode {
             Mode::Pomodoro => {
-                if self.rounds % self.config.rounds_before_long_break == 0 {
+                if self
+                    .rounds
+                    .is_multiple_of(self.config.rounds_before_long_break)
+                {
                     Mode::LongBreak
                 } else {
                     Mode::ShortBreak
@@ -151,7 +154,7 @@ impl State {
     }
 
     fn subscription(_: &Self) -> Subscription<Message> {
-        Subscription::run(|| timer::start()).map(Message::Timer)
+        Subscription::run(timer::start).map(Message::Timer)
     }
 
     fn view(&self) -> Element<'_, Message> {
