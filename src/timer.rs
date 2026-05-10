@@ -1,7 +1,6 @@
 use std::time::Duration;
 
-use futures::{Stream, channel::mpsc::Sender};
-use iced::stream;
+use futures::{Stream, channel::mpsc as fmpsc};
 use tokio::{select, sync::mpsc, time};
 
 #[derive(Debug, Clone)]
@@ -36,7 +35,9 @@ pub enum Command {
 }
 
 pub fn start() -> impl Stream<Item = Event> {
-    stream::channel(100, |mut output: Sender<Event>| async move {
+    let (mut output, stream) = fmpsc::channel(100);
+
+    tokio::spawn(async move {
         let mut state = TimerState::Stopped;
         let (tx, mut rx) = mpsc::channel(100);
         let timer = Timer(tx);
@@ -75,7 +76,9 @@ pub fn start() -> impl Stream<Item = Event> {
                 }
             }
         }
-    })
+    });
+
+    stream
 }
 
 /// Start one second from now so the first tick fires after 1s, not immediately.
