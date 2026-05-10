@@ -9,9 +9,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            work_duration: 5,
-            short_break_duration: 2,
-            long_break_duration: 3,
+            work_duration: 25 * 60,
+            short_break_duration: 5 * 60,
+            long_break_duration: 15 * 60,
             rounds_before_long_break: 4,
         }
     }
