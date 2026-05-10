@@ -4,8 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["tokio"] }
 tokio = { version = "1.52.3", features = ["full"] }
 anyhow = "1.0.102"
 env_logger = "0.11.10"
-futures = "0.3.32"
+interprocess = { version = "2.4.2", features = ["tokio"] }
+
+
+[[bin]]
+name = "pawmodoro"
+path = "src/main.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"

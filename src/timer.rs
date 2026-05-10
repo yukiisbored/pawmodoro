@@ -1,7 +1,10 @@
 use std::time::Duration;
 
-use futures::{Stream, channel::mpsc as fmpsc};
-use tokio::{select, sync::mpsc, time};
+use tokio::{
+    select,
+    sync::{broadcast, mpsc},
+    time,
+};
 
 #[derive(Debug, Clone)]
 pub struct Timer(mpsc::Sender<Command>);
@@ -34,14 +37,14 @@ pub enum Command {
     Stop,
 }
 
-pub fn start() -> impl Stream<Item = Event> {
-    let (mut output, stream) = fmpsc::channel(100);
+pub fn start() -> broadcast::Receiver<Event> {
+    let (output, stream) = broadcast::channel(100);
 
     tokio::spawn(async move {
         let mut state = TimerState::Stopped;
         let (tx, mut rx) = mpsc::channel(100);
         let timer = Timer(tx);
-        output.try_send(Event::Init(timer)).unwrap();
+        output.send(Event::Init(timer)).unwrap();
 
         loop {
             select! {
@@ -61,16 +64,16 @@ pub fn start() -> impl Stream<Item = Event> {
                     if let TimerState::Running(ref mut interval, _) = state {
                         interval.tick().await;
                     } else {
-                        futures::future::pending::<()>().await;
+                        std::future::pending::<()>().await;
                     }
                 } => {
                     if let TimerState::Running(_, ref mut remaining) = state {
                         if *remaining > 0 {
                             *remaining -= 1;
-                            output.try_send(Event::Tick(*remaining)).unwrap();
+                            output.send(Event::Tick(*remaining)).unwrap();
                         } else {
                             state = TimerState::Stopped;
-                            output.try_send(Event::Stopped).unwrap();
+                            output.send(Event::Stopped).unwrap();
                         }
                     }
                 }
