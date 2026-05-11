@@ -1,80 +1,166 @@
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tokio::{
     select,
     sync::{broadcast, mpsc},
     time,
 };
 
+use crate::config::Config;
+
 #[derive(Debug, Clone)]
 pub struct Timer(mpsc::Sender<Command>);
 
 impl Timer {
-    pub fn start(&self, duration: u64) {
-        self.0.try_send(Command::Start(duration)).unwrap();
-    }
-
-    pub fn stop(&self) {
-        self.0.try_send(Command::Stop).unwrap();
+    pub fn send(&self, cmd: Command) {
+        let _ = self.0.try_send(cmd);
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 enum TimerState {
-    Running(time::Interval, u64),
-    Stopped,
+    Running(u64),
+    Paused(u64),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Mode {
+    Pomodoro,
+    ShortBreak,
+    LongBreak,
 }
 
 #[derive(Debug, Clone)]
 pub enum Event {
     Init(Timer),
-    Tick(u64),
-    Stopped,
+    Tick(State),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
-    Start(u64),
-    Stop,
+    Start,
+    Pause,
+    Switch(Mode),
+    Next,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct State {
+    config: Config,
+    mode: Mode,
+    timer: TimerState,
+    rounds: u64,
+}
+
+impl State {
+    fn new(config: Config) -> Self {
+        let work_duration = config.work_duration;
+
+        State {
+            config,
+            mode: Mode::Pomodoro,
+            timer: TimerState::Paused(work_duration),
+            rounds: 0,
+        }
+    }
+
+    fn next_mode(&self) -> Mode {
+        match self.mode {
+            Mode::Pomodoro => {
+                if self
+                    .rounds
+                    .is_multiple_of(self.config.rounds_before_long_break)
+                {
+                    Mode::LongBreak
+                } else {
+                    Mode::ShortBreak
+                }
+            }
+            Mode::ShortBreak | Mode::LongBreak => Mode::Pomodoro,
+        }
+    }
+
+    fn pause(&mut self) {
+        if let TimerState::Running(remaining) = self.timer {
+            self.timer = TimerState::Paused(remaining);
+        }
+    }
+
+    fn update(&mut self, cmd: Command) {
+        match cmd {
+            Command::Start => {
+                if let TimerState::Paused(remaining) = self.timer {
+                    self.timer = TimerState::Running(remaining);
+                }
+            }
+            Command::Pause => self.pause(),
+
+            Command::Switch(mode) => {
+                self.pause();
+
+                let duration = match mode {
+                    Mode::Pomodoro => self.config.work_duration,
+                    Mode::ShortBreak => self.config.short_break_duration,
+                    Mode::LongBreak => self.config.long_break_duration,
+                };
+
+                self.mode = mode;
+                self.timer = TimerState::Paused(duration);
+            }
+            Command::Next => {
+                if self.mode == Mode::Pomodoro {
+                    self.rounds += 1;
+                }
+
+                let mode = self.next_mode();
+
+                self.update(Command::Switch(mode))
+            }
+        }
+    }
 }
 
 pub fn start() -> broadcast::Receiver<Event> {
     let (output, stream) = broadcast::channel(100);
 
     tokio::spawn(async move {
-        let mut state = TimerState::Stopped;
         let (tx, mut rx) = mpsc::channel(100);
         let timer = Timer(tx);
         output.send(Event::Init(timer)).unwrap();
 
+        let mut state = State::new(Config::default());
+        let mut interval: Option<time::Interval> = None;
+
         loop {
             select! {
                 Some(cmd) = rx.recv() => {
-                    match cmd {
-                        Command::Start(duration) => {
-                            state = TimerState::Running(new_interval(), duration);
-                        },
-                        Command::Stop => {
-                            if let TimerState::Running(_, _) = state {
-                                state = TimerState::Stopped;
-                            }
-                        },
-                    }
+                    state.update(cmd);
+                    output.send(Event::Tick(state.clone())).unwrap();
                 }
                 _ = async {
-                    if let TimerState::Running(ref mut interval, _) = state {
-                        interval.tick().await;
-                    } else {
-                        std::future::pending::<()>().await;
+                    if let TimerState::Paused(_) = state.timer {
+                        return std::future::pending::<()>().await;
                     }
+
+                    let interval = match interval {
+                        Some(ref mut interval) => interval,
+                        None => {
+                            interval = Some(new_interval());
+                            interval.as_mut().unwrap()
+                        }
+                    };
+
+                    interval.tick().await;
                 } => {
-                    if let TimerState::Running(_, ref mut remaining) = state {
+                    if let TimerState::Running(ref mut remaining) = state.timer {
                         if *remaining > 0 {
                             *remaining -= 1;
-                            output.send(Event::Tick(*remaining)).unwrap();
                         } else {
-                            state = TimerState::Stopped;
-                            output.send(Event::Stopped).unwrap();
+                            state.update(Command::Next);
                         }
+
+                        output.send(Event::Tick(state.clone())).unwrap();
                     }
                 }
             }

@@ -8,6 +8,12 @@ tokio = { version = "1.52.3", features = ["full"] }
 anyhow = "1.0.102"
 env_logger = "0.11.10"
 interprocess = { version = "2.4.2", features = ["tokio"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+clap = { version = "4.6.1", features = ["derive"] }
+inquire = "0.9.4"
+inquire-derive = "0.9.4"
+colored = "3.1.1"
 
 
 [[bin]]

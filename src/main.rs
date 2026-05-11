@@ -2,7 +2,7 @@ use anyhow::Result;
 use interprocess::local_socket::{
     GenericNamespaced, ListenerOptions, ToNsName, tokio::Stream, traits::tokio::Listener as _,
 };
-use pawmodoro::timer;
+use pawmodoro::timer::{self, Event};
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     select,
@@ -28,16 +28,20 @@ async fn main() -> Result<()> {
         .try_overwrite(true)
         .create_tokio()?;
 
-    timer.start(25 * 60);
     loop {
         let conn = listener.accept().await?;
 
         let events = timer_events.resubscribe();
-        tokio::spawn(async move { handle_client(conn, events).await });
+        let timer = timer.clone();
+        tokio::spawn(async move { handle_client(conn, events, timer).await });
     }
 }
 
-async fn handle_client(conn: Stream, mut events: broadcast::Receiver<timer::Event>) -> Result<()> {
+async fn handle_client(
+    conn: Stream,
+    mut events: broadcast::Receiver<timer::Event>,
+    timer: timer::Timer,
+) -> Result<()> {
     let (read_half, mut write_half) = tokio::io::split(conn);
     let mut reader = BufReader::new(read_half);
     let mut buffer = String::with_capacity(128);
@@ -50,11 +54,20 @@ async fn handle_client(conn: Stream, mut events: broadcast::Receiver<timer::Even
                     eprintln!("Client disconnected");
                     break Ok(());
                 }
-                println!("Received command: {}", buffer.trim());
+
+                let command: timer::Command = serde_json::from_str(buffer.trim())?;
+                timer.send(command);
+
                 buffer.clear();
             },
             Ok(event) = events.recv() => {
-                write_half.write_all(format!("Event: {:?}\n", event).as_bytes()).await?;
+                let Event::Tick(state) = event else {
+                    continue;
+                };
+
+                let serialized = serde_json::to_string(&state)?;
+                write_half.write_all(serialized.as_bytes()).await?;
+                write_half.write_all(b"\n").await?;
             },
         }
     }

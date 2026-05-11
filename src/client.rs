@@ -12,9 +12,14 @@ async fn main() -> Result<()> {
     let mut reader = BufReader::new(&conn);
 
     loop {
-        let Ok(_bytes) = reader.read_line(&mut buffer).await else {
+        let Ok(bytes) = reader.read_line(&mut buffer).await else {
             break Ok(());
         };
+
+        if bytes == 0 {
+            break Ok(());
+        }
+
         println!("Received: {}", buffer.trim());
     }
 }
