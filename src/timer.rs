@@ -1,25 +1,30 @@
 use std::time::Duration;
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::{
     select,
-    sync::{broadcast, mpsc},
+    sync::{mpsc, oneshot},
     time,
 };
 
 use crate::config::Config;
 
 #[derive(Debug, Clone)]
-pub struct Timer(mpsc::Sender<Command>);
+pub struct Timer(mpsc::Sender<Request>);
 
 impl Timer {
-    pub fn send(&self, cmd: Command) {
-        let _ = self.0.try_send(cmd);
+    pub async fn execute(&self, cmd: Command) -> Result<State> {
+        let (tx, rx) = oneshot::channel();
+        self.0.send(Request(cmd, tx)).await?;
+        Ok(rx.await?)
     }
 }
 
+struct Request(Command, oneshot::Sender<State>);
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-enum TimerState {
+pub enum TimerState {
     Running(u64),
     Paused(u64),
 }
@@ -31,26 +36,21 @@ pub enum Mode {
     LongBreak,
 }
 
-#[derive(Debug, Clone)]
-pub enum Event {
-    Init(Timer),
-    Tick(State),
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     Start,
     Pause,
     Switch(Mode),
     Next,
+    Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct State {
-    config: Config,
-    mode: Mode,
-    timer: TimerState,
-    rounds: u64,
+    pub config: Config,
+    pub mode: Mode,
+    pub timer: TimerState,
+    pub rounds: u64,
 }
 
 impl State {
@@ -89,6 +89,7 @@ impl State {
 
     fn update(&mut self, cmd: Command) {
         match cmd {
+            Command::Status => {}
             Command::Start => {
                 if let TimerState::Paused(remaining) = self.timer {
                     self.timer = TimerState::Running(remaining);
@@ -121,22 +122,18 @@ impl State {
     }
 }
 
-pub fn start() -> broadcast::Receiver<Event> {
-    let (output, stream) = broadcast::channel(100);
+pub fn start() -> Timer {
+    let (tx, mut rx) = mpsc::channel::<Request>(100);
 
     tokio::spawn(async move {
-        let (tx, mut rx) = mpsc::channel(100);
-        let timer = Timer(tx);
-        output.send(Event::Init(timer)).unwrap();
-
         let mut state = State::new(Config::default());
         let mut interval: Option<time::Interval> = None;
 
         loop {
             select! {
-                Some(cmd) = rx.recv() => {
+                Some(Request(cmd, reply)) = rx.recv() => {
                     state.update(cmd);
-                    output.send(Event::Tick(state.clone())).unwrap();
+                    let _ = reply.send(state.clone());
                 }
                 _ = async {
                     if let TimerState::Paused(_) = state.timer {
@@ -159,15 +156,13 @@ pub fn start() -> broadcast::Receiver<Event> {
                         } else {
                             state.update(Command::Next);
                         }
-
-                        output.send(Event::Tick(state.clone())).unwrap();
                     }
                 }
             }
         }
     });
 
-    stream
+    Timer(tx)
 }
 
 /// Start one second from now so the first tick fires after 1s, not immediately.

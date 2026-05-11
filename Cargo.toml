@@ -17,9 +17,9 @@ colored = "3.1.1"
 
 
 [[bin]]
-name = "pawmodoro"
-path = "src/main.rs"
+name = "pawd"
+path = "src/pawd.rs"
 
 [[bin]]
-name = "client"
-path = "src/client.rs"
+name = "paw"
+path = "src/paw.rs"
